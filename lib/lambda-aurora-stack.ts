@@ -11,6 +11,7 @@ import {
   aws_lambda_nodejs as nodejs,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
+import * as path from "path";
 import * as fs from "fs";
 
 export class LambdaAuroraStack extends Stack {
@@ -254,7 +255,7 @@ export class LambdaAuroraStack extends Stack {
 
     // User data for Amazon Linux 2
     const userDataParameter = fs.readFileSync(
-      "./src/ec2/user_data_db_client.sh",
+      path.join(__dirname, "../src/ec2/user_data_db_client.sh"),
       "utf8"
     );
     const userDataAmazonLinux2 = ec2.UserData.forLinux({
@@ -286,16 +287,34 @@ export class LambdaAuroraStack extends Stack {
       userData: userDataAmazonLinux2,
     });
 
+    // Lambda Function DB access IAM Role
+    const dbAccessFunctionIamRole = new iam.Role(
+      this,
+      "DbAccessFunctionIamRole",
+      {
+        assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName(
+            "service-role/AWSLambdaVPCAccessExecutionRole"
+          ),
+          getSecretValueIamPolicy,
+        ],
+      }
+    );
+
     // Lambda Function DB access
-    new nodejs.NodejsFunction(this, "DbAccessFunction", {
-      entry: "./src/lambda/handlers/db-access.ts",
+    new nodejs.NodejsFunction(this, "DbAccessDbconnectOutsideHandlerFunction", {
+      entry: path.join(
+        __dirname,
+        "../src/lambda/handlers/db-access-dbconnect-outside-handler.ts"
+      ),
       runtime: lambda.Runtime.NODEJS_14_X,
       bundling: {
         minify: true,
         sourceMap: true,
         externalModules: ["pg-native"],
         target: "node14.19",
-        tsconfig: "./src/lambda/tsconfig.json",
+        tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
         format: nodejs.OutputFormat.ESM,
         nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
       },
@@ -304,15 +323,37 @@ export class LambdaAuroraStack extends Stack {
         SECRET_ID: dbAdminSecret.secretArn,
         NODE_OPTIONS: "--enable-source-maps",
       },
-      role: new iam.Role(this, "DbAccessFunctionIamRole", {
-        assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
-        managedPolicies: [
-          iam.ManagedPolicy.fromAwsManagedPolicyName(
-            "service-role/AWSLambdaVPCAccessExecutionRole"
-          ),
-          getSecretValueIamPolicy,
-        ],
+      role: dbAccessFunctionIamRole,
+      logRetention: logs.RetentionDays.TWO_WEEKS,
+      tracing: lambda.Tracing.ACTIVE,
+      securityGroups: [dbClientSg],
+      vpc,
+      vpcSubnets: vpc.selectSubnets({
+        subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
       }),
+    });
+
+    new nodejs.NodejsFunction(this, "DbAccessDbconnectInsideHandlerFunction", {
+      entry: path.join(
+        __dirname,
+        "../src/lambda/handlers/db-access-dbconnect-inside-handler.ts"
+      ),
+      runtime: lambda.Runtime.NODEJS_14_X,
+      bundling: {
+        minify: true,
+        sourceMap: true,
+        externalModules: ["pg-native"],
+        target: "node14.19",
+        tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
+        format: nodejs.OutputFormat.ESM,
+        nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
+      },
+      environment: {
+        PROXY_ENDPOINT: rdsProxy.endpoint,
+        SECRET_ID: dbAdminSecret.secretArn,
+        NODE_OPTIONS: "--enable-source-maps",
+      },
+      role: dbAccessFunctionIamRole,
       logRetention: logs.RetentionDays.TWO_WEEKS,
       tracing: lambda.Tracing.ACTIVE,
       securityGroups: [dbClientSg],
