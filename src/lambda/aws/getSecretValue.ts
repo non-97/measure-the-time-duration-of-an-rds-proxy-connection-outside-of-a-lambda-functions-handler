@@ -5,9 +5,6 @@ import {
 import { Secret } from "../aws/secret";
 
 export const getSecretValue = async (): Promise<Secret> => {
-  // console.log("getSecret");
-  // console.log(process.env.AWS_REGION!);
-  // console.log(SecretsManagerClient);
   const secretsManagerClient = new SecretsManagerClient({
     region: process.env.AWS_REGION!,
   });
@@ -17,6 +14,5 @@ export const getSecretValue = async (): Promise<Secret> => {
   const getSecretValueCommandResponse = await secretsManagerClient.send(
     getSecretValueCommand
   );
-  // console.log(getSecretValueCommandResponse);
   return JSON.parse(getSecretValueCommandResponse.SecretString!);
 };
