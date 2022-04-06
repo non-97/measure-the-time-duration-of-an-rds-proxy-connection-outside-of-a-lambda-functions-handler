@@ -1,5 +1,5 @@
 import pg from "pg";
-import { Secret } from "../aws/secret";
+import { Secret } from "./secret";
 
 const { Client } = pg;
 

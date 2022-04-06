@@ -2,7 +2,7 @@ import {
   SecretsManagerClient,
   GetSecretValueCommand,
 } from "@aws-sdk/client-secrets-manager";
-import { Secret } from "../aws/secret";
+import { Secret } from "./secret";
 
 export const getSecretValue = async (): Promise<Secret> => {
   const secretsManagerClient = new SecretsManagerClient({
