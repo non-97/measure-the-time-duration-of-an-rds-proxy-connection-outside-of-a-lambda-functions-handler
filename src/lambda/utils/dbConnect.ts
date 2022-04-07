@@ -1,11 +1,9 @@
 import pg from "pg";
 import { Secret } from "./secret";
 
-const { Client } = pg;
-
-export const dbConnect = async (secret: Secret): Promise<Client> => {
+export const dbConnect = async (secret: Secret): Promise<pg.Client> => {
   // DB Client
-  const dbClient = new Client({
+  const dbClient = new pg.Client({
     user: secret.username,
     host: process.env.PROXY_ENDPOINT,
     database: secret.dbname,
