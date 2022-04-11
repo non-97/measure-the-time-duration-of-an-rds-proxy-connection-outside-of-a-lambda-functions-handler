@@ -14,7 +14,7 @@
     "@types/jest": "^26.0.10",
     "@types/node": "10.17.27",
     "@types/pg": "^8.6.5",
-    "aws-cdk": "2.19.0",
+    "aws-cdk": "^2.20.0",
     "esbuild": "^0.14.31",
     "jest": "^26.4.2",
     "prettier": "^2.6.2",
@@ -24,7 +24,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.58.0",
-    "aws-cdk-lib": "2.19.0",
+    "aws-cdk-lib": "^2.20.0",
     "constructs": "^10.0.0",
     "pg": "^8.7.3",
     "source-map-support": "^0.5.16"

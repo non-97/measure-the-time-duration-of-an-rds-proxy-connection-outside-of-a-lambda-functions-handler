@@ -1,4 +1,5 @@
 import {
+  Fn,
   Duration,
   Stack,
   StackProps,
@@ -9,6 +10,8 @@ import {
   aws_rds as rds,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
+  aws_stepfunctions as sfn,
+  aws_stepfunctions_tasks as tasks,
 } from "aws-cdk-lib";
 import { Construct } from "constructs";
 import * as path from "path";
@@ -218,6 +221,7 @@ export class LambdaAuroraStack extends Stack {
       vpc,
       borrowTimeout: Duration.seconds(300),
       dbProxyName: "db-proxy",
+      idleClientTimeout: Duration.seconds(300),
       debugLogging: true,
       requireTLS: true,
       securityGroups: [rdsProxySg],
@@ -303,64 +307,172 @@ export class LambdaAuroraStack extends Stack {
     );
 
     // Lambda Function DB access
-    new nodejs.NodejsFunction(this, "DbAccessDbconnectOutsideHandlerFunction", {
-      entry: path.join(
-        __dirname,
-        "../src/lambda/handlers/db-access-dbconnect-outside-handler.ts"
-      ),
-      runtime: lambda.Runtime.NODEJS_14_X,
-      bundling: {
-        minify: true,
-        sourceMap: true,
-        externalModules: ["pg-native"],
-        target: "node14.19",
-        tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
-        format: nodejs.OutputFormat.ESM,
-        nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
-      },
-      environment: {
-        PROXY_ENDPOINT: rdsProxy.endpoint,
-        SECRET_ID: dbAdminSecret.secretArn,
-        NODE_OPTIONS: "--enable-source-maps",
-      },
-      role: dbAccessFunctionIamRole,
-      logRetention: logs.RetentionDays.TWO_WEEKS,
-      tracing: lambda.Tracing.ACTIVE,
-      securityGroups: [dbClientSg],
-      vpc,
-      vpcSubnets: vpc.selectSubnets({
-        subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
-      }),
-    });
+    const dbAccessDbConnectOutsideHandlerFunction = new nodejs.NodejsFunction(
+      this,
+      "DbAccessDbConnectOutsideHandlerFunction",
+      {
+        entry: path.join(
+          __dirname,
+          "../src/lambda/handlers/db-access-dbconnect-outside-handler.ts"
+        ),
+        runtime: lambda.Runtime.NODEJS_14_X,
+        bundling: {
+          minify: true,
+          sourceMap: true,
+          externalModules: ["pg-native"],
+          target: "node14.19",
+          tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
+          format: nodejs.OutputFormat.ESM,
+          nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
+        },
+        environment: {
+          PROXY_ENDPOINT: rdsProxy.endpoint,
+          SECRET_ID: dbAdminSecret.secretArn,
+          NODE_OPTIONS: "--enable-source-maps",
+        },
+        role: dbAccessFunctionIamRole,
+        logRetention: logs.RetentionDays.TWO_WEEKS,
+        tracing: lambda.Tracing.ACTIVE,
+        securityGroups: [dbClientSg],
+        vpc,
+        vpcSubnets: vpc.selectSubnets({
+          subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
+        }),
+      }
+    );
 
-    new nodejs.NodejsFunction(this, "DbAccessDbconnectInsideHandlerFunction", {
-      entry: path.join(
-        __dirname,
-        "../src/lambda/handlers/db-access-dbconnect-inside-handler.ts"
-      ),
-      runtime: lambda.Runtime.NODEJS_14_X,
-      bundling: {
-        minify: true,
-        sourceMap: true,
-        externalModules: ["pg-native"],
-        target: "node14.19",
-        tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
-        format: nodejs.OutputFormat.ESM,
-        nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
-      },
-      environment: {
-        PROXY_ENDPOINT: rdsProxy.endpoint,
-        SECRET_ID: dbAdminSecret.secretArn,
-        NODE_OPTIONS: "--enable-source-maps",
-      },
-      role: dbAccessFunctionIamRole,
-      logRetention: logs.RetentionDays.TWO_WEEKS,
-      tracing: lambda.Tracing.ACTIVE,
-      securityGroups: [dbClientSg],
-      vpc,
-      vpcSubnets: vpc.selectSubnets({
-        subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
+    const dbAccessDbConnectInsideHandlerFunction = new nodejs.NodejsFunction(
+      this,
+      "DbAccessDbConnectInsideHandlerFunction",
+      {
+        entry: path.join(
+          __dirname,
+          "../src/lambda/handlers/db-access-dbconnect-inside-handler.ts"
+        ),
+        runtime: lambda.Runtime.NODEJS_14_X,
+        bundling: {
+          minify: true,
+          sourceMap: true,
+          externalModules: ["pg-native"],
+          target: "node14.19",
+          tsconfig: path.join(__dirname, "../src/lambda/tsconfig.json"),
+          format: nodejs.OutputFormat.ESM,
+          nodeModules: ["@aws-sdk/client-secrets-manager", "pg"],
+        },
+        environment: {
+          PROXY_ENDPOINT: rdsProxy.endpoint,
+          SECRET_ID: dbAdminSecret.secretArn,
+          NODE_OPTIONS: "--enable-source-maps",
+        },
+        role: dbAccessFunctionIamRole,
+        logRetention: logs.RetentionDays.TWO_WEEKS,
+        tracing: lambda.Tracing.ACTIVE,
+        securityGroups: [dbClientSg],
+        vpc,
+        vpcSubnets: vpc.selectSubnets({
+          subnetType: ec2.SubnetType.PRIVATE_WITH_NAT,
+        }),
+      }
+    );
+
+    const createNumberArrayFunction = new nodejs.NodejsFunction(
+      this,
+      "CreateNumberArrayFunction",
+      {
+        entry: path.join(
+          __dirname,
+          "../src/lambda/handlers/create-number-array.ts"
+        ),
+        runtime: lambda.Runtime.NODEJS_14_X,
+        bundling: {
+          minify: true,
+          sourceMap: true,
+        },
+        environment: {
+          NODE_OPTIONS: "--enable-source-maps",
+        },
+        logRetention: logs.RetentionDays.TWO_WEEKS,
+        tracing: lambda.Tracing.ACTIVE,
+      }
+    );
+
+    // CloudWatch Logs for State Machines
+    const stateMachineLogGroup = new logs.LogGroup(
+      this,
+      "StateMachineLogGroup",
+      {
+        logGroupName: `/aws/vendedlogs/states/stateMachineLogGroup-${Fn.select(
+          2,
+          Fn.split("/", this.stackId)
+        )}`,
+        retention: logs.RetentionDays.TWO_WEEKS,
+      }
+    );
+
+    // State Machine Tasks
+    const patternDbConnectTasks = [
+      new tasks.LambdaInvoke(this, "Pattern1DbConnectTask", {
+        lambdaFunction: dbAccessDbConnectOutsideHandlerFunction,
+        invocationType: tasks.LambdaInvocationType.REQUEST_RESPONSE,
+        payload: sfn.TaskInput.fromObject({
+          payload: sfn.JsonPath.stringAt("$"),
+        }),
+        outputPath: "$.StatusCode",
       }),
+      new tasks.LambdaInvoke(this, "Pattern2DbConnectTask", {
+        lambdaFunction: dbAccessDbConnectInsideHandlerFunction,
+        invocationType: tasks.LambdaInvocationType.REQUEST_RESPONSE,
+        payload: sfn.TaskInput.fromObject({
+          payload: sfn.JsonPath.stringAt("$"),
+        }),
+        outputPath: "$.StatusCode",
+      }),
+      new tasks.LambdaInvoke(this, "Pattern3DbConnectTask", {
+        lambdaFunction: dbAccessDbConnectOutsideHandlerFunction,
+        invocationType: tasks.LambdaInvocationType.EVENT,
+        payload: sfn.TaskInput.fromObject({
+          payload: sfn.JsonPath.stringAt("$"),
+        }),
+        outputPath: "$.StatusCode",
+      }),
+      new tasks.LambdaInvoke(this, "Pattern4DbConnectTask", {
+        lambdaFunction: dbAccessDbConnectInsideHandlerFunction,
+        invocationType: tasks.LambdaInvocationType.EVENT,
+        payload: sfn.TaskInput.fromObject({
+          payload: sfn.JsonPath.stringAt("$"),
+        }),
+        outputPath: "$.StatusCode",
+      }),
+    ];
+
+    // State Machine
+    patternDbConnectTasks.forEach((patternDbConnectTask, index) => {
+      const createNumberArrayTask = new tasks.LambdaInvoke(
+        this,
+        `Pattern${index + 1}CreateNumberArrayTask`,
+        {
+          lambdaFunction: createNumberArrayFunction,
+          payload: sfn.TaskInput.fromObject({
+            number: sfn.JsonPath.stringAt("$.numberForInputMap"),
+          }),
+        }
+      );
+
+      const map = new sfn.Map(this, `Pattern${index + 1}MapState`, {
+        maxConcurrency: index < 2 ? 1 : 0,
+        itemsPath: sfn.JsonPath.stringAt("$.Payload.numberArray"),
+      });
+
+      new sfn.StateMachine(this, `Pattern${index + 1}StateMachine`, {
+        definition: createNumberArrayTask
+          .next(map.iterator(patternDbConnectTask))
+          .next(new sfn.Succeed(this, `Pattern${index + 1}SuccessState`)),
+        logs: {
+          destination: stateMachineLogGroup,
+          level: sfn.LogLevel.ALL,
+        },
+        tracingEnabled: true,
+      });
     });
   }
 }
